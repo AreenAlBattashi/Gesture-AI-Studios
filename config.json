@@ -1,0 +1,47 @@
+{
+    "settings": {
+        "open_hand_mode": "Normal Gesture Action"
+    },
+    "Closed Fist": {
+        "message": "hello ",
+        "color": "#af22b8",
+        "size": 1.18,
+        "animation": "None"
+    },
+    "One Finger": {
+        "message": "Hello ",
+        "color": "#aa0d79",
+        "size": 1.0,
+        "animation": "Glow Box"
+    },
+    "Peace Sign": {
+        "message": "My name is Areen ",
+        "color": "#24b41a",
+        "size": 0.85,
+        "animation": "Pulse Text"
+    },
+    "Three Fingers": {
+        "message": "I am 18 years old",
+        "color": "#1bb6af",
+        "size": 1.63,
+        "animation": "Moving Circle"
+    },
+    "Open Hand": {
+        "message": "Welcome to Gesture Ai studios ",
+        "color": "#d9cd05",
+        "size": 0.9,
+        "animation": "Pulse Text"
+    },
+    "Index and Pinky": {
+        "message": "Special Option Selected",
+        "color": "#FFA500",
+        "size": 1.0,
+        "animation": "Confetti"
+    },
+    "Rock Sign": {
+        "message": "Energy Mode Activated",
+        "color": "#FF0000",
+        "size": 1.1,
+        "animation": "Glow Box"
+    }
+}
