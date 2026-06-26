@@ -3,26 +3,26 @@
         "open_hand_mode": "Normal Gesture Action"
     },
     "Closed Fist": {
-        "message": "hello ",
-        "color": "#af22b8",
+        "message": "please open your fist",
+        "color": "#0bd6db",
         "size": 1.18,
-        "animation": "None"
-    },
-    "One Finger": {
-        "message": "Hello ",
-        "color": "#aa0d79",
-        "size": 1.0,
         "animation": "Glow Box"
     },
+    "One Finger": {
+        "message": "My name is anaum",
+        "color": "#1c6ef2",
+        "size": 0.78,
+        "animation": "Frame Flash"
+    },
     "Peace Sign": {
-        "message": "My name is Areen ",
-        "color": "#24b41a",
+        "message": "you are 18 years old",
+        "color": "#4b1ab4",
         "size": 0.85,
         "animation": "Pulse Text"
     },
     "Three Fingers": {
-        "message": "I am 18 years old",
-        "color": "#1bb6af",
+        "message": "you study at school 8th grade",
+        "color": "#b64a1b",
         "size": 1.63,
         "animation": "Moving Circle"
     },
@@ -33,14 +33,14 @@
         "animation": "Pulse Text"
     },
     "Index and Pinky": {
-        "message": "Special Option Selected",
-        "color": "#FFA500",
+        "message": "UTAS-MUSCAT",
+        "color": "#2e06ac",
         "size": 1.0,
         "animation": "Confetti"
     },
     "Rock Sign": {
-        "message": "Energy Mode Activated",
-        "color": "#FF0000",
+        "message": "Areen is the best",
+        "color": "#e0ff00",
         "size": 1.1,
         "animation": "Glow Box"
     }
