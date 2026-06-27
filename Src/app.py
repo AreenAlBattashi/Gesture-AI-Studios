@@ -59,6 +59,21 @@ THEMES = {
 os.makedirs(PRESET_FOLDER, exist_ok=True)
 
 
+def get_user_folder():
+
+    username = st.session_state.username
+
+    folder = os.path.join("users", username)
+
+    screenshots = os.path.join(folder, "screenshots")
+    projects = os.path.join(folder, "projects")
+    config = os.path.join(folder, "config.json")
+
+    os.makedirs(folder, exist_ok=True)
+    os.makedirs(screenshots, exist_ok=True)
+    os.makedirs(projects, exist_ok=True)
+
+    return folder, screenshots, projects, config
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
