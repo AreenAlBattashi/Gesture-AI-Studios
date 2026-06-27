@@ -1,20 +1,10 @@
 import json
-import math
 import os
 import hashlib
-import threading
-import time
 from datetime import datetime
 
-import av
-import cv2
 import streamlit as st
-from streamlit_webrtc import WebRtcMode, VideoProcessorBase, webrtc_streamer
-
-try:
-    import mediapipe as mp
-except ImportError:
-    mp = None
+import streamlit.components.v1 as components
 
 st.set_page_config(
     page_title="Gesture AI Studios",
@@ -207,339 +197,276 @@ def reset_defaults():
     return config
 
 
-def hex_to_bgr(hex_color):
-    try:
-        hex_color = hex_color.lstrip("#")
-        r = int(hex_color[0:2], 16)
-        g = int(hex_color[2:4], 16)
-        b = int(hex_color[4:6], 16)
-        return (b, g, r)
-    except Exception:
-        return (194, 167, 0)
-
-
-def draw_animation(frame, animation, color, tick):
-    height, width, _ = frame.shape
-
-    if animation == "Glow Box":
-        cv2.rectangle(frame, (20, 20), (width - 20, height - 20), color, 6)
-    elif animation == "Confetti":
-        for i in range(35):
-            x = (i * 67 + tick * 8) % width
-            y = (i * 41 + tick * 6) % height
-            cv2.circle(frame, (x, y), 4, color, -1)
-    elif animation == "Moving Circle":
-        x = int((math.sin(tick / 10) + 1) * width / 2)
-        cv2.circle(frame, (x, 120), 28, color, -1)
-    elif animation == "Frame Flash":
-        thickness = 8 if tick % 20 < 10 else 3
-        cv2.rectangle(frame, (10, 10), (width - 10, height - 10), color, thickness)
-    elif animation == "Floating Text":
-        y = int(80 + 20 * math.sin(tick / 8))
-        cv2.circle(frame, (width - 90, y), 22, color, -1)
-
-    return frame
-
-
-def get_rainbow_color(tick):
-    r = int((math.sin(tick / 10) + 1) * 127)
-    g = int((math.sin(tick / 12 + 2) + 1) * 127)
-    b = int((math.sin(tick / 14 + 4) + 1) * 127)
-    return (b, g, r)
-
-
-def finger_states(landmarks):
-    return {
-        "index": landmarks[8].y < landmarks[6].y,
-        "middle": landmarks[12].y < landmarks[10].y,
-        "ring": landmarks[16].y < landmarks[14].y,
-        "pinky": landmarks[20].y < landmarks[18].y
-    }
-
-
-def detect_gesture(landmarks):
-    states = finger_states(landmarks)
-    index = states["index"]
-    middle = states["middle"]
-    ring = states["ring"]
-    pinky = states["pinky"]
-    fingers = sum([index, middle, ring, pinky])
-
-    if fingers == 0:
-        return "Closed Fist"
-    if index and not middle and not ring and not pinky:
-        return "One Finger"
-    if index and middle and not ring and not pinky:
-        return "Peace Sign"
-    if index and middle and ring and not pinky:
-        return "Three Fingers"
-    if index and not middle and not ring and pinky:
-        return "Index and Pinky"
-    if index and not middle and ring and pinky:
-        return "Rock Sign"
-    if index and middle and ring and pinky:
-        return "Open Hand"
-
-    return "Hand Detected"
-
-
-def draw_menu(frame, theme_colors):
-    accent = theme_colors["accent"]
-    white = theme_colors["white"]
-
-    cv2.rectangle(frame, (35, 70), (650, 355), (0, 0, 0), -1)
-    cv2.rectangle(frame, (35, 70), (650, 355), accent, 3)
-    cv2.putText(frame, "Gesture Menu", (65, 115),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, accent, 2)
-
-    lines = [
-        "One Finger       : Option 1",
-        "Peace Sign       : Option 2",
-        "Three Fingers    : Option 3",
-        "Index + Pinky    : Option 4",
-        "Rock Sign        : Option 5",
-        "Closed Fist      : Close Menu"
-    ]
-
-    y = 160
-    for line in lines:
-        cv2.putText(frame, line, (65, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, white, 2)
-        y += 35
-
-
-def put_wrapped_text(frame, text, position, font_scale, color, thickness=2, max_width=760):
-    x, y = position
-    words = text.split()
-    line = ""
-
-    for word in words:
-        test_line = line + word + " "
-        size = cv2.getTextSize(test_line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
-
-        if size[0] > max_width:
-            cv2.putText(frame, line, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
-            y += int(35 * font_scale) + 15
-            line = word + " "
-        else:
-            line = test_line
-
-    if line:
-        cv2.putText(frame, line, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
-
-
-class SmartMirrorProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.detector = None
-        self.detector_error = None
-
-        try:
-            if mp is None:
-                raise RuntimeError(
-                    "MediaPipe is not installed. Streamlit Cloud must use Python 3.11 or 3.12 for gesture recognition."
-                )
-
-            base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_FILE)
-            options = mp.tasks.vision.HandLandmarkerOptions(
-                base_options=base_options,
-                running_mode=mp.tasks.vision.RunningMode.IMAGE,
-                num_hands=1
-            )
-            self.detector = mp.tasks.vision.HandLandmarker.create_from_options(options)
-        except Exception as error:
-            self.detector_error = str(error)
-
-        self.menu_open = False
-        self.current_message = "Open your hand to show the menu"
-        self.current_color = (194, 167, 0)
-        self.current_size = 0.8
-        self.current_animation = "None"
-        self.gesture_history = []
-        self.history_size = 8
-        self.required_matches = 6
-        self.last_action_time = 0
-        self.cooldown = 1.3
-        self.tick = 0
-        self.last_time = time.time()
-        self.fps = 0
-        self.latest_frame = None
-        self.lock = threading.Lock()
-
-    def recv(self, frame):
-        self.tick += 1
-        img = cv2.flip(frame.to_ndarray(format="bgr24"), 1)
-        app_settings = ensure_config_shape(load_config()).get("settings", default_settings())
-        theme_colors = MIRROR_THEMES.get(app_settings.get("theme", "Light"), MIRROR_THEMES["Light"])
-
-        if self.detector is None:
-            cv2.putText(img, "MediaPipe could not start on this server.", (30, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, theme_colors["white"], 2)
-            cv2.putText(img, "Use Python 3.11 in Streamlit Cloud settings.", (30, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, theme_colors["white"], 2)
-            with self.lock:
-                self.latest_frame = img.copy()
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-        now_time = time.time()
-        self.fps = 1 / max(now_time - self.last_time, 0.001)
-        self.last_time = now_time
-
-        rgb_frame = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-        result = self.detector.detect(mp_image)
-        raw_gesture = "None"
-
-        if result.hand_landmarks:
-            height, width, _ = img.shape
-            for hand_landmarks in result.hand_landmarks:
-                raw_gesture = detect_gesture(hand_landmarks)
-
-                if app_settings.get("show_landmarks", True):
-                    for landmark in hand_landmarks:
-                        x = int(landmark.x * width)
-                        y = int(landmark.y * height)
-                        cv2.circle(img, (x, y), 4, theme_colors["accent"], -1)
-
-        self.gesture_history.append(raw_gesture)
-        if len(self.gesture_history) > self.history_size:
-            self.gesture_history.pop(0)
-
-        stable_gesture = max(set(self.gesture_history), key=self.gesture_history.count)
-        if self.gesture_history.count(stable_gesture) >= self.required_matches:
-            detected_gesture = stable_gesture
-        else:
-            detected_gesture = "Stabilizing..."
-
-        now = time.time()
-        if now - self.last_action_time > self.cooldown:
-            if detected_gesture == "Open Hand" and not self.menu_open:
-                if app_settings.get("open_hand_mode", "Show Menu") == "Show Menu":
-                    self.menu_open = True
-                    self.current_message = "Menu opened - choose an option"
-                    self.current_color = theme_colors["accent"]
-                    self.current_size = 0.8
-                    self.current_animation = "Glow Box"
-                else:
-                    settings = ensure_config_shape(load_config()).get("Open Hand", default_gesture_settings("Open Hand"))
-                    self.current_message = settings.get("message", "Open Hand detected")
-                    self.current_color = hex_to_bgr(settings.get("color", "#00A7C2"))
-                    self.current_size = float(settings.get("size", 1.0))
-                    self.current_animation = settings.get("animation", "None")
-                self.last_action_time = now
-
-            elif self.menu_open and detected_gesture in GESTURES_MENU_OPTIONS:
-                settings = ensure_config_shape(load_config()).get(detected_gesture, default_gesture_settings(detected_gesture))
-                self.current_message = settings.get("message", detected_gesture)
-                self.current_color = hex_to_bgr(settings.get("color", "#00A7C2"))
-                self.current_size = float(settings.get("size", 1.0))
-                self.current_animation = settings.get("animation", "None")
-                self.menu_open = False
-                self.last_action_time = now
-
-            elif self.menu_open and detected_gesture == "Closed Fist":
-                self.current_message = "Menu closed"
-                self.current_color = theme_colors["white"]
-                self.current_size = 0.8
-                self.current_animation = "None"
-                self.menu_open = False
-                self.last_action_time = now
-
-            elif not self.menu_open and detected_gesture in GESTURES:
-                settings = ensure_config_shape(load_config()).get(detected_gesture, default_gesture_settings(detected_gesture))
-                self.current_message = settings.get("message", detected_gesture)
-                self.current_color = hex_to_bgr(settings.get("color", "#00A7C2"))
-                self.current_size = float(settings.get("size", 1.0))
-                self.current_animation = settings.get("animation", "None")
-                self.last_action_time = now
-
-        display_color = self.current_color
-        display_size = self.current_size
-
-        if self.current_animation == "Pulse Text":
-            display_size = self.current_size + 0.25 * abs(math.sin(self.tick / 8))
-        if self.current_animation == "Rainbow Text":
-            display_color = get_rainbow_color(self.tick)
-
-        img = draw_animation(img, self.current_animation, display_color, self.tick)
-        if self.menu_open:
-            draw_menu(img, theme_colors)
-
-        height, width, _ = img.shape
-        put_wrapped_text(
-            img,
-            self.current_message,
-            (30, max(60, height - 60)),
-            display_size,
-            display_color,
-            thickness=2,
-            max_width=max(260, width - 70)
-        )
-        cv2.putText(img, f"Detected: {detected_gesture}", (30, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, theme_colors["white"], 2)
-
-        if app_settings.get("show_fps", True):
-            cv2.putText(img, f"FPS: {int(self.fps)}", (max(30, width - 135), 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, theme_colors["white"], 2)
-
-        with self.lock:
-            self.latest_frame = img.copy()
-
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-
 def render_smart_mirror():
     st.title("Gesture AI Studios - Smart Mirror")
-    st.write("Press START, allow camera access, and use your browser camera on this device.")
+    st.write("Press Start Camera, allow camera access, and use this device's browser camera.")
 
     if st.button("Back to Dashboard"):
         st.session_state.view = "dashboard"
         st.rerun()
 
-    if not os.path.exists(MODEL_FILE):
-        st.error("Missing hand_landmarker.task. Add it to the project root before deploying.")
-        return
+    mirror_config = ensure_config_shape(load_config())
+    component_config = json.dumps(mirror_config).replace("</", "<\\/")
 
-    if mp is None:
-        st.error(
-            "MediaPipe is not installed in this Streamlit environment. "
-            "Set the app Python version to 3.11, then reboot the app."
-        )
-        return
+    components.html(
+        f"""
+        <div class="mirror-shell">
+            <div class="mirror-toolbar">
+                <button id="startBtn">Start Camera</button>
+                <button id="shotBtn">Download Screenshot</button>
+                <span id="status">Camera is off</span>
+            </div>
+            <div class="mirror-stage">
+                <video id="video" playsinline muted></video>
+                <canvas id="canvas"></canvas>
+            </div>
+        </div>
 
-    ctx = webrtc_streamer(
-        key="gesture-ai-smart-mirror",
-        mode=WebRtcMode.SENDRECV,
-        video_processor_factory=SmartMirrorProcessor,
-        media_stream_constraints={"video": True, "audio": False},
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        async_processing=True,
+        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+        <script>
+        const config = {component_config};
+        const gestures = ["Closed Fist", "One Finger", "Peace Sign", "Three Fingers", "Open Hand", "Index and Pinky", "Rock Sign"];
+        const menuGestures = ["One Finger", "Peace Sign", "Three Fingers", "Index and Pinky", "Rock Sign"];
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const statusEl = document.getElementById("status");
+        const startBtn = document.getElementById("startBtn");
+        const shotBtn = document.getElementById("shotBtn");
+
+        let camera = null;
+        let menuOpen = false;
+        let currentMessage = "Open your hand to show the menu";
+        let currentColor = "#00A7C2";
+        let currentSize = 1;
+        let currentAnimation = "None";
+        let history = [];
+        let lastActionAt = 0;
+        let tick = 0;
+        let lastFrameAt = performance.now();
+        let fps = 0;
+
+        function setting(name) {{
+            return config[name] || {{message: `${{name}} detected!`, color: "#00A7C2", size: 1, animation: "None"}};
+        }}
+
+        function fingerStates(points) {{
+            return {{
+                index: points[8].y < points[6].y,
+                middle: points[12].y < points[10].y,
+                ring: points[16].y < points[14].y,
+                pinky: points[20].y < points[18].y
+            }};
+        }}
+
+        function detectGesture(points) {{
+            const s = fingerStates(points);
+            const count = [s.index, s.middle, s.ring, s.pinky].filter(Boolean).length;
+            if (count === 0) return "Closed Fist";
+            if (s.index && !s.middle && !s.ring && !s.pinky) return "One Finger";
+            if (s.index && s.middle && !s.ring && !s.pinky) return "Peace Sign";
+            if (s.index && s.middle && s.ring && !s.pinky) return "Three Fingers";
+            if (s.index && !s.middle && !s.ring && s.pinky) return "Index and Pinky";
+            if (s.index && !s.middle && s.ring && s.pinky) return "Rock Sign";
+            if (s.index && s.middle && s.ring && s.pinky) return "Open Hand";
+            return "Hand Detected";
+        }}
+
+        function stableGesture(raw) {{
+            history.push(raw);
+            if (history.length > 8) history.shift();
+            const counts = history.reduce((acc, item) => {{ acc[item] = (acc[item] || 0) + 1; return acc; }}, {{}});
+            const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || "None";
+            return counts[best] >= 6 ? best : "Stabilizing...";
+        }}
+
+        function applyGesture(gesture) {{
+            const now = performance.now();
+            if (now - lastActionAt < 1300) return;
+
+            if (gesture === "Open Hand" && !menuOpen) {{
+                if ((config.settings || {{}}).open_hand_mode === "Show Menu") {{
+                    menuOpen = true;
+                    currentMessage = "Menu opened - choose an option";
+                    currentColor = "#00A7C2";
+                    currentSize = 1;
+                    currentAnimation = "Glow Box";
+                }} else {{
+                    const s = setting("Open Hand");
+                    currentMessage = s.message;
+                    currentColor = s.color;
+                    currentSize = Number(s.size || 1);
+                    currentAnimation = s.animation || "None";
+                }}
+                lastActionAt = now;
+            }} else if (menuOpen && menuGestures.includes(gesture)) {{
+                const s = setting(gesture);
+                currentMessage = s.message;
+                currentColor = s.color;
+                currentSize = Number(s.size || 1);
+                currentAnimation = s.animation || "None";
+                menuOpen = false;
+                lastActionAt = now;
+            }} else if (menuOpen && gesture === "Closed Fist") {{
+                currentMessage = "Menu closed";
+                currentColor = "#ffffff";
+                currentSize = 1;
+                currentAnimation = "None";
+                menuOpen = false;
+                lastActionAt = now;
+            }} else if (!menuOpen && gestures.includes(gesture)) {{
+                const s = setting(gesture);
+                currentMessage = s.message;
+                currentColor = s.color;
+                currentSize = Number(s.size || 1);
+                currentAnimation = s.animation || "None";
+                lastActionAt = now;
+            }}
+        }}
+
+        function drawAnimation(color) {{
+            if (currentAnimation === "Glow Box") {{
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 8;
+                ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+            }} else if (currentAnimation === "Confetti") {{
+                ctx.fillStyle = color;
+                for (let i = 0; i < 35; i++) {{
+                    const x = (i * 67 + tick * 8) % canvas.width;
+                    const y = (i * 41 + tick * 6) % canvas.height;
+                    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+                }}
+            }} else if (currentAnimation === "Moving Circle") {{
+                const x = (Math.sin(tick / 10) + 1) * canvas.width / 2;
+                ctx.fillStyle = color;
+                ctx.beginPath(); ctx.arc(x, 120, 30, 0, Math.PI * 2); ctx.fill();
+            }} else if (currentAnimation === "Frame Flash") {{
+                ctx.strokeStyle = color;
+                ctx.lineWidth = tick % 20 < 10 ? 10 : 4;
+                ctx.strokeRect(12, 12, canvas.width - 24, canvas.height - 24);
+            }} else if (currentAnimation === "Floating Text") {{
+                const y = 90 + 24 * Math.sin(tick / 8);
+                ctx.fillStyle = color;
+                ctx.beginPath(); ctx.arc(canvas.width - 90, y, 24, 0, Math.PI * 2); ctx.fill();
+            }}
+        }}
+
+        function drawText(text, color, size) {{
+            const fontSize = Math.max(22, Math.min(56, 30 * size));
+            ctx.font = `700 ${{fontSize}}px Arial`;
+            ctx.fillStyle = color;
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = "rgba(0,0,0,.55)";
+            const words = text.split(" ");
+            let line = "";
+            let y = canvas.height - 60;
+            const maxWidth = canvas.width - 60;
+            const lines = [];
+            words.forEach(word => {{
+                const test = line + word + " ";
+                if (ctx.measureText(test).width > maxWidth && line) {{
+                    lines.push(line.trim());
+                    line = word + " ";
+                }} else {{
+                    line = test;
+                }}
+            }});
+            if (line) lines.push(line.trim());
+            y -= (lines.length - 1) * (fontSize + 8);
+            lines.forEach(row => {{
+                ctx.strokeText(row, 30, y);
+                ctx.fillText(row, 30, y);
+                y += fontSize + 8;
+            }});
+        }}
+
+        function drawMenu() {{
+            ctx.fillStyle = "rgba(0,0,0,.72)";
+            ctx.fillRect(35, 70, 620, 285);
+            ctx.strokeStyle = "#00A7C2";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(35, 70, 620, 285);
+            ctx.fillStyle = "#00E5FF";
+            ctx.font = "700 34px Arial";
+            ctx.fillText("Gesture Menu", 65, 115);
+            ctx.fillStyle = "white";
+            ctx.font = "22px Arial";
+            ["One Finger       : Option 1", "Peace Sign       : Option 2", "Three Fingers    : Option 3", "Index + Pinky    : Option 4", "Rock Sign        : Option 5", "Closed Fist      : Close Menu"].forEach((line, i) => ctx.fillText(line, 65, 160 + i * 35));
+        }}
+
+        function onResults(results) {{
+            tick += 1;
+            const now = performance.now();
+            fps = 1000 / Math.max(now - lastFrameAt, 1);
+            lastFrameAt = now;
+            canvas.width = video.videoWidth || 854;
+            canvas.height = video.videoHeight || 480;
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.drawImage(results.image, -canvas.width, 0, canvas.width, canvas.height);
+            ctx.restore();
+
+            let raw = "None";
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length) {{
+                raw = detectGesture(results.multiHandLandmarks[0]);
+                if ((config.settings || {{}}).show_landmarks !== false) {{
+                    drawConnectors(ctx, results.multiHandLandmarks[0], HAND_CONNECTIONS, {{color: "#00E5FF", lineWidth: 3}});
+                    drawLandmarks(ctx, results.multiHandLandmarks[0], {{color: "#ffffff", lineWidth: 1, radius: 3}});
+                }}
+            }}
+            const detected = stableGesture(raw);
+            applyGesture(detected);
+
+            let color = currentColor;
+            let size = currentSize;
+            if (currentAnimation === "Pulse Text") size += 0.25 * Math.abs(Math.sin(tick / 8));
+            if (currentAnimation === "Rainbow Text") color = `rgb(${{Math.round((Math.sin(tick / 10) + 1) * 127)}}, ${{Math.round((Math.sin(tick / 12 + 2) + 1) * 127)}}, ${{Math.round((Math.sin(tick / 14 + 4) + 1) * 127)}})`;
+
+            drawAnimation(color);
+            if (menuOpen) drawMenu();
+            drawText(currentMessage, color, size);
+            ctx.fillStyle = "white";
+            ctx.font = "20px Arial";
+            ctx.fillText(`Detected: ${{detected}}`, 30, 38);
+            if ((config.settings || {{}}).show_fps !== false) ctx.fillText(`FPS: ${{Math.round(fps)}}`, canvas.width - 105, 38);
+        }}
+
+        startBtn.onclick = async () => {{
+            statusEl.textContent = "Loading camera...";
+            try {{
+                const hands = new Hands({{locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${{file}}`}});
+                hands.setOptions({{maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6}});
+                hands.onResults(onResults);
+                camera = new Camera(video, {{onFrame: async () => await hands.send({{image: video}}), width: 854, height: 480}});
+                await camera.start();
+                statusEl.textContent = "Camera running";
+            }} catch (error) {{
+                statusEl.textContent = `Camera error: ${{error.message}}`;
+            }}
+        }};
+
+        shotBtn.onclick = () => {{
+            const link = document.createElement("a");
+            link.download = `smart_mirror_${{Date.now()}}.png`;
+            link.href = canvas.toDataURL("image/png");
+            link.click();
+        }};
+        </script>
+
+        <style>
+        .mirror-shell {{ font-family: Arial, sans-serif; color: #082f49; }}
+        .mirror-toolbar {{ display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }}
+        .mirror-toolbar button {{ background: #0b3c5d; color: white; border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 700; cursor: pointer; }}
+        .mirror-toolbar span {{ color: #0b3c5d; font-weight: 700; }}
+        .mirror-stage {{ width: 100%; max-width: 980px; background: #061826; border-radius: 8px; overflow: hidden; position: relative; }}
+        video {{ display: none; }}
+        canvas {{ display: block; width: 100%; aspect-ratio: 16 / 9; background: #061826; }}
+        </style>
+        """,
+        height=720,
     )
-
-    st.divider()
-    if st.button("Take Screenshot"):
-        if ctx.video_processor:
-            with ctx.video_processor.lock:
-                frame = ctx.video_processor.latest_frame
-
-            if frame is None:
-                st.warning("Start the camera first, then take a screenshot.")
-            else:
-                os.makedirs(SCREENSHOT_FOLDER, exist_ok=True)
-                filename = f"smart_mirror_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                path = os.path.join(SCREENSHOT_FOLDER, filename)
-                cv2.imwrite(path, frame)
-
-                with open(path, "rb") as file:
-                    st.download_button(
-                        "Download Screenshot",
-                        file,
-                        file_name=filename,
-                        mime="image/png"
-                    )
-        else:
-            st.warning("Press START first.")
-
-
 st.markdown(
     """
     <style>
@@ -668,7 +595,7 @@ with col_logo:
 
 with col_title:
     st.title("Gesture AI Studios")
-    st.write(f"Welcome, **{st.session_state.username}** 👋")
+    st.write(f"Welcome, **{st.session_state.username}**")
 
 if st.button("Logout"):
     st.session_state.logged_in = False
@@ -759,18 +686,18 @@ for gesture in GESTURES:
 col_save, col_run, col_stop = st.columns(3)
 
 with col_save:
-    if st.button("💾 Save Settings"):
+    if st.button("Save Settings"):
         save_config(config)
         st.success("Settings saved successfully.")
 
 with col_run:
-    if st.button("▶ Run Smart Mirror"):
+    if st.button("Run Smart Mirror"):
         save_config(config)
         st.session_state.view = "mirror"
         st.rerun()
 
 with col_stop:
-    if st.button("⏹ Stop Smart Mirror"):
+    if st.button("Stop Smart Mirror"):
         st.info("Use the STOP button inside the Smart Mirror camera panel.")
 
 col_reset, col_export = st.columns(2)
@@ -790,7 +717,7 @@ with col_export:
     )
 
 st.divider()
-st.subheader("💾 Saved Project Configurations")
+st.subheader("Saved Project Configurations")
 
 project_name = st.text_input("Configuration Name", "My Event Setup")
 
@@ -833,7 +760,7 @@ with col_project_load:
         st.info("No saved configurations yet.")
 
 st.divider()
-st.subheader("📸 Smart Mirror Gallery")
+st.subheader("Smart Mirror Gallery")
 
 SCREENSHOT_FOLDER = "screenshots"
 
@@ -859,20 +786,20 @@ if images:
     with col_download:
         with open(image_path, "rb") as file:
             st.download_button(
-                "⬇ Download",
+                "Download",
                 file,
                 file_name=selected_image,
                 mime="image/png"
             )
 
     with col_delete:
-        if st.button("🗑 Delete Screenshot"):
+        if st.button("Delete Screenshot"):
             os.remove(image_path)
             st.success("Screenshot deleted.")
             st.rerun()
 
     with col_refresh:
-        if st.button("🔄 Refresh Gallery"):
+        if st.button("Refresh Gallery"):
             st.rerun()
 else:
     st.info("No screenshots found. Open Smart Mirror and press S to save one.")
@@ -907,4 +834,5 @@ for gesture in GESTURES:
         unsafe_allow_html=True
     )
 
-st.info("Tip: In Smart Mirror mode, press Q to quit, S to save a screenshot, F for fullscreen, and ESC to exit fullscreen.")
+st.info("Tip: In Smart Mirror mode, press Start Camera and allow browser camera access.")
+
