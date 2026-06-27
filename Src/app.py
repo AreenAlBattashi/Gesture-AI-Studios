@@ -326,13 +326,20 @@ def put_wrapped_text(frame, text, position, font_scale, color, thickness=2, max_
 
 class SmartMirrorProcessor(VideoProcessorBase):
     def __init__(self):
-        base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_FILE)
-        options = mp.tasks.vision.HandLandmarkerOptions(
-            base_options=base_options,
-            running_mode=mp.tasks.vision.RunningMode.IMAGE,
-            num_hands=1
-        )
-        self.detector = mp.tasks.vision.HandLandmarker.create_from_options(options)
+        self.detector = None
+        self.detector_error = None
+
+        try:
+            base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_FILE)
+            options = mp.tasks.vision.HandLandmarkerOptions(
+                base_options=base_options,
+                running_mode=mp.tasks.vision.RunningMode.IMAGE,
+                num_hands=1
+            )
+            self.detector = mp.tasks.vision.HandLandmarker.create_from_options(options)
+        except Exception as error:
+            self.detector_error = str(error)
+
         self.menu_open = False
         self.current_message = "Open your hand to show the menu"
         self.current_color = (194, 167, 0)
@@ -354,6 +361,15 @@ class SmartMirrorProcessor(VideoProcessorBase):
         img = cv2.flip(frame.to_ndarray(format="bgr24"), 1)
         app_settings = ensure_config_shape(load_config()).get("settings", default_settings())
         theme_colors = MIRROR_THEMES.get(app_settings.get("theme", "Light"), MIRROR_THEMES["Light"])
+
+        if self.detector is None:
+            cv2.putText(img, "MediaPipe could not start on this server.", (30, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, theme_colors["white"], 2)
+            cv2.putText(img, "Use Python 3.11 in Streamlit Cloud settings.", (30, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, theme_colors["white"], 2)
+            with self.lock:
+                self.latest_frame = img.copy()
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
 
         now_time = time.time()
         self.fps = 1 / max(now_time - self.last_time, 0.001)
