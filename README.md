@@ -35,7 +35,7 @@ The application combines real-time computer vision with an easy-to-use dashboard
 
 Supports multiple real-time gestures including:
 
-- 👍 Thumbs Up
+
 - ✊ Closed Fist
 - ☝ One Finger
 - ✌ Peace Sign
