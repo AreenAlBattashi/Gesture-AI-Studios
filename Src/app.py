@@ -208,14 +208,14 @@ def render_smart_mirror():
 
     mirror_config = ensure_config_shape(load_config())
     component_config = json.dumps(mirror_config).replace("</", "<\\/")
+    screenshot_store_key = json.dumps(f"gesture_ai_screenshots_{st.session_state.username}")
 
     components.html(
         f"""
-        <div class="mirror-shell">
+        <div class="mirror-shell" tabindex="0">
             <div class="mirror-toolbar">
                 <button id="startBtn">Start Camera</button>
-                <button id="shotBtn">Download Screenshot</button>
-                <span id="status">Camera is off</span>
+                <span id="status">Camera is off. Press S in the mirror to save a screenshot.</span>
             </div>
             <div class="mirror-stage">
                 <video id="video" playsinline muted></video>
@@ -235,8 +235,9 @@ def render_smart_mirror():
         const ctx = canvas.getContext("2d");
         const statusEl = document.getElementById("status");
         const startBtn = document.getElementById("startBtn");
-        const shotBtn = document.getElementById("shotBtn");
         const stage = document.querySelector(".mirror-stage");
+        const shell = document.querySelector(".mirror-shell");
+        const screenshotStoreKey = {screenshot_store_key};
 
         let camera = null;
         let menuOpen = false;
@@ -250,6 +251,31 @@ def render_smart_mirror():
         let lastFrameAt = performance.now();
         let fps = 0;
         const wantsFullscreen = Boolean((config.settings || {{}}).fullscreen);
+
+        function loadScreenshots() {{
+            try {{
+                return JSON.parse(localStorage.getItem(screenshotStoreKey) || "[]");
+            }} catch {{
+                return [];
+            }}
+        }}
+
+        function saveScreenshot() {{
+            if (!canvas.width || !canvas.height) {{
+                statusEl.textContent = "Start the camera before saving a screenshot.";
+                return;
+            }}
+            const shots = loadScreenshots();
+            const now = new Date();
+            const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\\..+/, "");
+            shots.unshift({{
+                name: `smart_mirror_${{stamp}}.png`,
+                createdAt: now.toLocaleString(),
+                dataUrl: canvas.toDataURL("image/png")
+            }});
+            localStorage.setItem(screenshotStoreKey, JSON.stringify(shots.slice(0, 25)));
+            statusEl.textContent = "Screenshot saved. Return to the dashboard gallery to download or delete it.";
+        }}
 
         function setting(name) {{
             return config[name] || {{message: `${{name}} detected!`, color: "#00A7C2", size: 1, animation: "None"}};
@@ -463,18 +489,26 @@ def render_smart_mirror():
                 hands.onResults(onResults);
                 camera = new Camera(video, {{onFrame: async () => await hands.send({{image: video}}), width: 854, height: 480}});
                 await camera.start();
-                statusEl.textContent = "Camera running";
+                shell.focus();
+                statusEl.textContent = "Camera running. Press S to save a screenshot.";
             }} catch (error) {{
                 statusEl.textContent = `Camera error: ${{error.message}}`;
             }}
         }};
 
-        shotBtn.onclick = () => {{
-            const link = document.createElement("a");
-            link.download = `smart_mirror_${{Date.now()}}.png`;
-            link.href = canvas.toDataURL("image/png");
-            link.click();
-        }};
+        shell.addEventListener("keydown", event => {{
+            if (event.key.toLowerCase() === "s") {{
+                event.preventDefault();
+                saveScreenshot();
+            }}
+        }});
+
+        document.addEventListener("keydown", event => {{
+            if (event.key.toLowerCase() === "s") {{
+                event.preventDefault();
+                saveScreenshot();
+            }}
+        }});
         </script>
 
         <style>
@@ -606,7 +640,7 @@ if not st.session_state.logged_in:
 
 
 config = ensure_config_shape(load_config())
-_, user_screenshots_folder, user_projects_folder, _ = get_user_folder()
+_, _, user_projects_folder, _ = get_user_folder()
 
 if st.session_state.view == "mirror":
     render_smart_mirror()
@@ -789,42 +823,108 @@ with col_project_load:
 st.divider()
 st.subheader("Smart Mirror Gallery")
 
-images = sorted(
-    [
-        img for img in os.listdir(user_screenshots_folder)
-        if img.lower().endswith((".png", ".jpg", ".jpeg"))
-    ],
-    reverse=True
+gallery_store_key = json.dumps(f"gesture_ai_screenshots_{st.session_state.username}")
+
+components.html(
+    f"""
+    <div class="gallery-shell">
+        <div class="gallery-actions">
+            <button id="refreshGallery">Refresh</button>
+            <button id="deleteAllGallery">Delete All</button>
+            <span id="galleryStatus"></span>
+        </div>
+        <div id="galleryGrid" class="gallery-grid"></div>
+    </div>
+
+    <script>
+    const galleryStoreKey = {gallery_store_key};
+    const galleryGrid = document.getElementById("galleryGrid");
+    const galleryStatus = document.getElementById("galleryStatus");
+
+    function loadShots() {{
+        try {{
+            return JSON.parse(localStorage.getItem(galleryStoreKey) || "[]");
+        }} catch {{
+            return [];
+        }}
+    }}
+
+    function saveShots(shots) {{
+        localStorage.setItem(galleryStoreKey, JSON.stringify(shots));
+    }}
+
+    function downloadShot(shot) {{
+        const link = document.createElement("a");
+        link.download = shot.name || "smart_mirror.png";
+        link.href = shot.dataUrl;
+        link.click();
+    }}
+
+    function renderGallery() {{
+        const shots = loadShots();
+        galleryGrid.innerHTML = "";
+        galleryStatus.textContent = shots.length ? `${{shots.length}} screenshot(s) in your account on this browser.` : "No screenshots found in your account yet.";
+
+        shots.forEach((shot, index) => {{
+            const card = document.createElement("div");
+            card.className = "shot-card";
+
+            const img = document.createElement("img");
+            img.src = shot.dataUrl;
+            img.alt = shot.name || "Smart Mirror screenshot";
+
+            const meta = document.createElement("div");
+            meta.className = "shot-meta";
+            meta.textContent = `${{shot.name || "Screenshot"}} · ${{shot.createdAt || ""}}`;
+
+            const row = document.createElement("div");
+            row.className = "shot-actions";
+
+            const download = document.createElement("button");
+            download.textContent = "Download";
+            download.onclick = () => downloadShot(shot);
+
+            const remove = document.createElement("button");
+            remove.textContent = "Delete";
+            remove.onclick = () => {{
+                const updated = loadShots();
+                updated.splice(index, 1);
+                saveShots(updated);
+                renderGallery();
+            }};
+
+            row.append(download, remove);
+            card.append(img, meta, row);
+            galleryGrid.appendChild(card);
+        }});
+    }}
+
+    document.getElementById("refreshGallery").onclick = renderGallery;
+    document.getElementById("deleteAllGallery").onclick = () => {{
+        if (confirm("Delete all screenshots for this account on this browser?")) {{
+            saveShots([]);
+            renderGallery();
+        }}
+    }};
+
+    renderGallery();
+    </script>
+
+    <style>
+    .gallery-shell {{ font-family: Arial, sans-serif; color: #082f49; }}
+    .gallery-actions {{ display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }}
+    .gallery-actions button, .shot-actions button {{ background: #0b3c5d; color: white; border: 0; border-radius: 8px; padding: 9px 12px; font-weight: 700; cursor: pointer; }}
+    .gallery-actions button:hover, .shot-actions button:hover {{ background: #5bb9cc; }}
+    #deleteAllGallery, .shot-actions button:last-child {{ background: #8b1e2d; }}
+    .gallery-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }}
+    .shot-card {{ border: 1px solid #d7e6ec; border-radius: 8px; padding: 10px; background: #fff; }}
+    .shot-card img {{ width: 100%; border-radius: 6px; background: #061826; display: block; }}
+    .shot-meta {{ font-size: 12px; color: #456; margin: 8px 0; word-break: break-word; }}
+    .shot-actions {{ display: flex; gap: 8px; }}
+    </style>
+    """,
+    height=620,
 )
-
-if images:
-    selected_image = st.selectbox("Choose Screenshot", images)
-    image_path = os.path.join(user_screenshots_folder, selected_image)
-
-    st.image(image_path, use_container_width=True)
-
-    col_download, col_delete, col_refresh = st.columns(3)
-
-    with col_download:
-        with open(image_path, "rb") as file:
-            st.download_button(
-                "Download",
-                file,
-                file_name=selected_image,
-                mime="image/png"
-            )
-
-    with col_delete:
-        if st.button("Delete Screenshot"):
-            os.remove(image_path)
-            st.success("Screenshot deleted.")
-            st.rerun()
-
-    with col_refresh:
-        if st.button("Refresh Gallery"):
-            st.rerun()
-else:
-    st.info("No screenshots found in your account yet.")
 
 st.divider()
 st.subheader("Current Project Setup")
