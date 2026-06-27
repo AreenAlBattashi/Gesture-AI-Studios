@@ -1,0 +1,51 @@
+{
+    "settings": {
+        "open_hand_mode": "Show Menu",
+        "fullscreen": false,
+        "show_fps": true,
+        "show_landmarks": true,
+        "theme": "Dark Tech"
+    },
+    "Closed Fist": {
+        "message": "Experience closed",
+        "color": "#FFFFFF",
+        "size": 0.9,
+        "animation": "None"
+    },
+    "One Finger": {
+        "message": "Option 1 selected",
+        "color": "#00A7C2",
+        "size": 1.0,
+        "animation": "Glow Box"
+    },
+    "Peace Sign": {
+        "message": "Welcome visitor!",
+        "color": "#0000FF",
+        "size": 1.1,
+        "animation": "Pulse Text"
+    },
+    "Three Fingers": {
+        "message": "Next experience activated",
+        "color": "#FF00FF",
+        "size": 1.0,
+        "animation": "Moving Circle"
+    },
+    "Open Hand": {
+        "message": "Welcome to Gesture AI Studios!",
+        "color": "#00FFFF",
+        "size": 1.1,
+        "animation": "Frame Flash"
+    },
+    "Index and Pinky": {
+        "message": "Special option selected",
+        "color": "#FFA500",
+        "size": 1.0,
+        "animation": "Confetti"
+    },
+    "Rock Sign": {
+        "message": "",
+        "color": "#FF0000",
+        "size": 1.1,
+        "animation": "Rainbow Text"
+    }
+}

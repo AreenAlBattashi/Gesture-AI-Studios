@@ -1,0 +1,51 @@
+{
+    "settings": {
+        "open_hand_mode": "Normal Gesture Action",
+        "fullscreen": true,
+        "show_fps": true,
+        "show_landmarks": false,
+        "theme": "Dark"
+    },
+    "Closed Fist": {
+        "message": "please open your hand",
+        "color": "#e61d1d",
+        "size": 1.2,
+        "animation": "Rainbow Text"
+    },
+    "One Finger": {
+        "message": "my name is hasina",
+        "color": "#00A7C2",
+        "size": 1.0,
+        "animation": "Glow Box"
+    },
+    "Peace Sign": {
+        "message": "i am 21 years old",
+        "color": "#4db60f",
+        "size": 1.1,
+        "animation": "Pulse Text"
+    },
+    "Three Fingers": {
+        "message": "UTAS-muscat",
+        "color": "#FF00FF",
+        "size": 1.0,
+        "animation": "Moving Circle"
+    },
+    "Open Hand": {
+        "message": "Welcome to Gesture AI Studios!",
+        "color": "#00FFFF",
+        "size": 1.1,
+        "animation": "Frame Flash"
+    },
+    "Index and Pinky": {
+        "message": "software engineering",
+        "color": "#FFA500",
+        "size": 1.0,
+        "animation": "Confetti"
+    },
+    "Rock Sign": {
+        "message": "",
+        "color": "#FF0000",
+        "size": 1.1,
+        "animation": "Rainbow Text"
+    }
+}
