@@ -15,8 +15,6 @@ CONFIG_FILE = "config.json"
 USERS_FILE = "users.json"
 LOGO_PATH = "assets/gesture_logo.png"
 MODEL_FILE = "hand_landmarker.task"
-PRESET_FOLDER = "saved_projects"
-SCREENSHOT_FOLDER = "screenshots"
 
 GESTURES = [
     "Closed Fist",
@@ -76,11 +74,7 @@ MIRROR_THEMES = {
     }
 }
 
-os.makedirs(PRESET_FOLDER, exist_ok=True)
-
-
 def get_user_folder():
-
     username = st.session_state.username
 
     folder = os.path.join("users", username)
@@ -94,6 +88,13 @@ def get_user_folder():
     os.makedirs(projects, exist_ok=True)
 
     return folder, screenshots, projects, config
+
+
+def safe_filename(name):
+    safe = "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in name.strip())
+    return safe.strip("_")
+
+
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -605,6 +606,7 @@ if not st.session_state.logged_in:
 
 
 config = ensure_config_shape(load_config())
+_, user_screenshots_folder, user_projects_folder, _ = get_user_folder()
 
 if st.session_state.view == "mirror":
     render_smart_mirror()
@@ -750,12 +752,12 @@ col_project_save, col_project_load = st.columns(2)
 
 with col_project_save:
     if st.button("Save Configuration As"):
-        safe_name = project_name.strip().replace(" ", "_")
+        safe_name = safe_filename(project_name)
 
         if not safe_name:
             st.error("Please enter a valid configuration name.")
         else:
-            preset_path = os.path.join(PRESET_FOLDER, safe_name + ".json")
+            preset_path = os.path.join(user_projects_folder, safe_name + ".json")
             save_config(config)
 
             with open(preset_path, "w") as file:
@@ -765,7 +767,7 @@ with col_project_save:
 
 with col_project_load:
     saved_files = [
-        file for file in os.listdir(PRESET_FOLDER)
+        file for file in os.listdir(user_projects_folder)
         if file.endswith(".json")
     ]
 
@@ -773,7 +775,7 @@ with col_project_load:
         selected_preset = st.selectbox("Load Saved Configuration", saved_files)
 
         if st.button("Load Configuration"):
-            preset_path = os.path.join(PRESET_FOLDER, selected_preset)
+            preset_path = os.path.join(user_projects_folder, selected_preset)
 
             with open(preset_path, "r") as file:
                 loaded_config = json.load(file)
@@ -787,14 +789,9 @@ with col_project_load:
 st.divider()
 st.subheader("Smart Mirror Gallery")
 
-SCREENSHOT_FOLDER = "screenshots"
-
-if not os.path.exists(SCREENSHOT_FOLDER):
-    os.makedirs(SCREENSHOT_FOLDER)
-
 images = sorted(
     [
-        img for img in os.listdir(SCREENSHOT_FOLDER)
+        img for img in os.listdir(user_screenshots_folder)
         if img.lower().endswith((".png", ".jpg", ".jpeg"))
     ],
     reverse=True
@@ -802,7 +799,7 @@ images = sorted(
 
 if images:
     selected_image = st.selectbox("Choose Screenshot", images)
-    image_path = os.path.join(SCREENSHOT_FOLDER, selected_image)
+    image_path = os.path.join(user_screenshots_folder, selected_image)
 
     st.image(image_path, use_container_width=True)
 
@@ -827,7 +824,7 @@ if images:
         if st.button("Refresh Gallery"):
             st.rerun()
 else:
-    st.info("No screenshots found. Open Smart Mirror and press S to save one.")
+    st.info("No screenshots found in your account yet.")
 
 st.divider()
 st.subheader("Current Project Setup")
