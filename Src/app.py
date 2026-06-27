@@ -8,9 +8,13 @@ from datetime import datetime
 
 import av
 import cv2
-import mediapipe as mp
 import streamlit as st
 from streamlit_webrtc import WebRtcMode, VideoProcessorBase, webrtc_streamer
+
+try:
+    import mediapipe as mp
+except ImportError:
+    mp = None
 
 st.set_page_config(
     page_title="Gesture AI Studios",
@@ -330,6 +334,11 @@ class SmartMirrorProcessor(VideoProcessorBase):
         self.detector_error = None
 
         try:
+            if mp is None:
+                raise RuntimeError(
+                    "MediaPipe is not installed. Streamlit Cloud must use Python 3.11 or 3.12 for gesture recognition."
+                )
+
             base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_FILE)
             options = mp.tasks.vision.HandLandmarkerOptions(
                 base_options=base_options,
@@ -488,6 +497,13 @@ def render_smart_mirror():
 
     if not os.path.exists(MODEL_FILE):
         st.error("Missing hand_landmarker.task. Add it to the project root before deploying.")
+        return
+
+    if mp is None:
+        st.error(
+            "MediaPipe is not installed in this Streamlit environment. "
+            "Set the app Python version to 3.11, then reboot the app."
+        )
         return
 
     ctx = webrtc_streamer(
