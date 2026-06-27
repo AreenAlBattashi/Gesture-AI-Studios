@@ -213,7 +213,6 @@ def render_smart_mirror():
         <div class="mirror-shell">
             <div class="mirror-toolbar">
                 <button id="startBtn">Start Camera</button>
-                <button id="fullBtn">Fullscreen</button>
                 <button id="shotBtn">Download Screenshot</button>
                 <span id="status">Camera is off</span>
             </div>
@@ -235,7 +234,6 @@ def render_smart_mirror():
         const ctx = canvas.getContext("2d");
         const statusEl = document.getElementById("status");
         const startBtn = document.getElementById("startBtn");
-        const fullBtn = document.getElementById("fullBtn");
         const shotBtn = document.getElementById("shotBtn");
         const stage = document.querySelector(".mirror-stage");
 
@@ -412,20 +410,6 @@ def render_smart_mirror():
             }}
         }}
 
-        async function toggleFullscreen() {{
-            try {{
-                if (document.fullscreenElement) {{
-                    await document.exitFullscreen();
-                }} else if (document.webkitFullscreenElement) {{
-                    document.webkitExitFullscreen();
-                }} else {{
-                    await enterFullscreen();
-                }}
-            }} catch (error) {{
-                statusEl.textContent = `Fullscreen error: ${{error.message}}`;
-            }}
-        }}
-
         function onResults(results) {{
             tick += 1;
             const now = performance.now();
@@ -483,15 +467,6 @@ def render_smart_mirror():
                 statusEl.textContent = `Camera error: ${{error.message}}`;
             }}
         }};
-
-        fullBtn.onclick = toggleFullscreen;
-
-        document.addEventListener("fullscreenchange", () => {{
-            fullBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
-        }});
-        document.addEventListener("webkitfullscreenchange", () => {{
-            fullBtn.textContent = document.webkitFullscreenElement ? "Exit Fullscreen" : "Fullscreen";
-        }});
 
         shotBtn.onclick = () => {{
             const link = document.createElement("a");
