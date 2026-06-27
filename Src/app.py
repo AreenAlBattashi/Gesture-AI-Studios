@@ -213,6 +213,7 @@ def render_smart_mirror():
         <div class="mirror-shell">
             <div class="mirror-toolbar">
                 <button id="startBtn">Start Camera</button>
+                <button id="fullBtn">Fullscreen</button>
                 <button id="shotBtn">Download Screenshot</button>
                 <span id="status">Camera is off</span>
             </div>
@@ -234,7 +235,9 @@ def render_smart_mirror():
         const ctx = canvas.getContext("2d");
         const statusEl = document.getElementById("status");
         const startBtn = document.getElementById("startBtn");
+        const fullBtn = document.getElementById("fullBtn");
         const shotBtn = document.getElementById("shotBtn");
+        const stage = document.querySelector(".mirror-stage");
 
         let camera = null;
         let menuOpen = false;
@@ -247,6 +250,7 @@ def render_smart_mirror():
         let tick = 0;
         let lastFrameAt = performance.now();
         let fps = 0;
+        const wantsFullscreen = Boolean((config.settings || {{}}).fullscreen);
 
         function setting(name) {{
             return config[name] || {{message: `${{name}} detected!`, color: "#00A7C2", size: 1, animation: "None"}};
@@ -396,6 +400,32 @@ def render_smart_mirror():
             ["One Finger       : Option 1", "Peace Sign       : Option 2", "Three Fingers    : Option 3", "Index + Pinky    : Option 4", "Rock Sign        : Option 5", "Closed Fist      : Close Menu"].forEach((line, i) => ctx.fillText(line, 65, 160 + i * 35));
         }}
 
+        async function enterFullscreen() {{
+            if (!document.fullscreenElement) {{
+                if (stage.requestFullscreen) {{
+                    await stage.requestFullscreen();
+                }} else if (stage.webkitRequestFullscreen) {{
+                    stage.webkitRequestFullscreen();
+                }} else {{
+                    throw new Error("Fullscreen is not supported by this browser");
+                }}
+            }}
+        }}
+
+        async function toggleFullscreen() {{
+            try {{
+                if (document.fullscreenElement) {{
+                    await document.exitFullscreen();
+                }} else if (document.webkitFullscreenElement) {{
+                    document.webkitExitFullscreen();
+                }} else {{
+                    await enterFullscreen();
+                }}
+            }} catch (error) {{
+                statusEl.textContent = `Fullscreen error: ${{error.message}}`;
+            }}
+        }}
+
         function onResults(results) {{
             tick += 1;
             const now = performance.now();
@@ -436,6 +466,13 @@ def render_smart_mirror():
         startBtn.onclick = async () => {{
             statusEl.textContent = "Loading camera...";
             try {{
+                if (wantsFullscreen) {{
+                    try {{
+                        await enterFullscreen();
+                    }} catch (fullscreenError) {{
+                        statusEl.textContent = `Fullscreen blocked: ${{fullscreenError.message}}`;
+                    }}
+                }}
                 const hands = new Hands({{locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${{file}}`}});
                 hands.setOptions({{maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6}});
                 hands.onResults(onResults);
@@ -446,6 +483,15 @@ def render_smart_mirror():
                 statusEl.textContent = `Camera error: ${{error.message}}`;
             }}
         }};
+
+        fullBtn.onclick = toggleFullscreen;
+
+        document.addEventListener("fullscreenchange", () => {{
+            fullBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+        }});
+        document.addEventListener("webkitfullscreenchange", () => {{
+            fullBtn.textContent = document.webkitFullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+        }});
 
         shotBtn.onclick = () => {{
             const link = document.createElement("a");
@@ -463,6 +509,10 @@ def render_smart_mirror():
         .mirror-stage {{ width: 100%; max-width: 980px; background: #061826; border-radius: 8px; overflow: hidden; position: relative; }}
         video {{ display: none; }}
         canvas {{ display: block; width: 100%; aspect-ratio: 16 / 9; background: #061826; }}
+        .mirror-stage:fullscreen {{ width: 100vw; height: 100vh; max-width: none; border-radius: 0; }}
+        .mirror-stage:fullscreen canvas {{ width: 100vw; height: 100vh; aspect-ratio: auto; object-fit: contain; }}
+        .mirror-stage:-webkit-full-screen {{ width: 100vw; height: 100vh; max-width: none; border-radius: 0; }}
+        .mirror-stage:-webkit-full-screen canvas {{ width: 100vw; height: 100vh; aspect-ratio: auto; object-fit: contain; }}
         </style>
         """,
         height=720,
