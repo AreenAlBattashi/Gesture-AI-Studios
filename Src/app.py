@@ -137,9 +137,22 @@ def login(username, password):
     return users[username]["password"] == hash_password(password)
 
 
+def get_config_file():
+    if st.session_state.get("logged_in") and st.session_state.get("username"):
+        _, _, _, user_config = get_user_folder()
+        return user_config
+
+    return CONFIG_FILE
+
+
 def load_config():
     try:
-        with open(CONFIG_FILE, "r") as file:
+        config_file = get_config_file()
+        if not os.path.exists(config_file) and config_file != CONFIG_FILE and os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as file:
+                return json.load(file)
+
+        with open(config_file, "r") as file:
             data = json.load(file)
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -147,7 +160,10 @@ def load_config():
 
 
 def save_config(config):
-    with open(CONFIG_FILE, "w") as file:
+    config_file = get_config_file()
+    os.makedirs(os.path.dirname(config_file) or ".", exist_ok=True)
+
+    with open(config_file, "w") as file:
         json.dump(config, file, indent=4)
 
 
@@ -779,6 +795,7 @@ with col_export:
 
 st.divider()
 st.subheader("Saved Project Configurations")
+st.caption(f"Configurations are private to {st.session_state.username}.")
 
 project_name = st.text_input("Configuration Name", "My Event Setup")
 
