@@ -1,11 +1,16 @@
 import json
+import math
 import os
-import subprocess
-import sys
 import hashlib
+import threading
+import time
 from datetime import datetime
 
+import av
+import cv2
+import mediapipe as mp
 import streamlit as st
+from streamlit_webrtc import WebRtcMode, VideoProcessorBase, webrtc_streamer
 
 st.set_page_config(
     page_title="Gesture AI Studios",
@@ -15,7 +20,9 @@ st.set_page_config(
 CONFIG_FILE = "config.json"
 USERS_FILE = "users.json"
 LOGO_PATH = "assets/gesture_logo.png"
+MODEL_FILE = "hand_landmarker.task"
 PRESET_FOLDER = "saved_projects"
+SCREENSHOT_FOLDER = "screenshots"
 
 GESTURES = [
     "Closed Fist",
@@ -23,6 +30,14 @@ GESTURES = [
     "Peace Sign",
     "Three Fingers",
     "Open Hand",
+    "Index and Pinky",
+    "Rock Sign"
+]
+
+GESTURES_MENU_OPTIONS = [
+    "One Finger",
+    "Peace Sign",
+    "Three Fingers",
     "Index and Pinky",
     "Rock Sign"
 ]
@@ -53,6 +68,17 @@ THEMES = {
         "primary": "#061826",
         "accent": "#00E5FF",
         "background": "#0B1720"
+    }
+}
+
+MIRROR_THEMES = {
+    "Light": {
+        "accent": (194, 167, 0),
+        "white": (255, 255, 255)
+    },
+    "Dark": {
+        "accent": (255, 229, 0),
+        "white": (255, 255, 255)
     }
 }
 
@@ -177,6 +203,311 @@ def reset_defaults():
     return config
 
 
+def hex_to_bgr(hex_color):
+    try:
+        hex_color = hex_color.lstrip("#")
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+        return (b, g, r)
+    except Exception:
+        return (194, 167, 0)
+
+
+def draw_animation(frame, animation, color, tick):
+    height, width, _ = frame.shape
+
+    if animation == "Glow Box":
+        cv2.rectangle(frame, (20, 20), (width - 20, height - 20), color, 6)
+    elif animation == "Confetti":
+        for i in range(35):
+            x = (i * 67 + tick * 8) % width
+            y = (i * 41 + tick * 6) % height
+            cv2.circle(frame, (x, y), 4, color, -1)
+    elif animation == "Moving Circle":
+        x = int((math.sin(tick / 10) + 1) * width / 2)
+        cv2.circle(frame, (x, 120), 28, color, -1)
+    elif animation == "Frame Flash":
+        thickness = 8 if tick % 20 < 10 else 3
+        cv2.rectangle(frame, (10, 10), (width - 10, height - 10), color, thickness)
+    elif animation == "Floating Text":
+        y = int(80 + 20 * math.sin(tick / 8))
+        cv2.circle(frame, (width - 90, y), 22, color, -1)
+
+    return frame
+
+
+def get_rainbow_color(tick):
+    r = int((math.sin(tick / 10) + 1) * 127)
+    g = int((math.sin(tick / 12 + 2) + 1) * 127)
+    b = int((math.sin(tick / 14 + 4) + 1) * 127)
+    return (b, g, r)
+
+
+def finger_states(landmarks):
+    return {
+        "index": landmarks[8].y < landmarks[6].y,
+        "middle": landmarks[12].y < landmarks[10].y,
+        "ring": landmarks[16].y < landmarks[14].y,
+        "pinky": landmarks[20].y < landmarks[18].y
+    }
+
+
+def detect_gesture(landmarks):
+    states = finger_states(landmarks)
+    index = states["index"]
+    middle = states["middle"]
+    ring = states["ring"]
+    pinky = states["pinky"]
+    fingers = sum([index, middle, ring, pinky])
+
+    if fingers == 0:
+        return "Closed Fist"
+    if index and not middle and not ring and not pinky:
+        return "One Finger"
+    if index and middle and not ring and not pinky:
+        return "Peace Sign"
+    if index and middle and ring and not pinky:
+        return "Three Fingers"
+    if index and not middle and not ring and pinky:
+        return "Index and Pinky"
+    if index and not middle and ring and pinky:
+        return "Rock Sign"
+    if index and middle and ring and pinky:
+        return "Open Hand"
+
+    return "Hand Detected"
+
+
+def draw_menu(frame, theme_colors):
+    accent = theme_colors["accent"]
+    white = theme_colors["white"]
+
+    cv2.rectangle(frame, (35, 70), (650, 355), (0, 0, 0), -1)
+    cv2.rectangle(frame, (35, 70), (650, 355), accent, 3)
+    cv2.putText(frame, "Gesture Menu", (65, 115),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, accent, 2)
+
+    lines = [
+        "One Finger       : Option 1",
+        "Peace Sign       : Option 2",
+        "Three Fingers    : Option 3",
+        "Index + Pinky    : Option 4",
+        "Rock Sign        : Option 5",
+        "Closed Fist      : Close Menu"
+    ]
+
+    y = 160
+    for line in lines:
+        cv2.putText(frame, line, (65, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, white, 2)
+        y += 35
+
+
+def put_wrapped_text(frame, text, position, font_scale, color, thickness=2, max_width=760):
+    x, y = position
+    words = text.split()
+    line = ""
+
+    for word in words:
+        test_line = line + word + " "
+        size = cv2.getTextSize(test_line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+
+        if size[0] > max_width:
+            cv2.putText(frame, line, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
+            y += int(35 * font_scale) + 15
+            line = word + " "
+        else:
+            line = test_line
+
+    if line:
+        cv2.putText(frame, line, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
+
+
+class SmartMirrorProcessor(VideoProcessorBase):
+    def __init__(self):
+        base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_FILE)
+        options = mp.tasks.vision.HandLandmarkerOptions(
+            base_options=base_options,
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            num_hands=1
+        )
+        self.detector = mp.tasks.vision.HandLandmarker.create_from_options(options)
+        self.menu_open = False
+        self.current_message = "Open your hand to show the menu"
+        self.current_color = (194, 167, 0)
+        self.current_size = 0.8
+        self.current_animation = "None"
+        self.gesture_history = []
+        self.history_size = 8
+        self.required_matches = 6
+        self.last_action_time = 0
+        self.cooldown = 1.3
+        self.tick = 0
+        self.last_time = time.time()
+        self.fps = 0
+        self.latest_frame = None
+        self.lock = threading.Lock()
+
+    def recv(self, frame):
+        self.tick += 1
+        img = cv2.flip(frame.to_ndarray(format="bgr24"), 1)
+        app_settings = ensure_config_shape(load_config()).get("settings", default_settings())
+        theme_colors = MIRROR_THEMES.get(app_settings.get("theme", "Light"), MIRROR_THEMES["Light"])
+
+        now_time = time.time()
+        self.fps = 1 / max(now_time - self.last_time, 0.001)
+        self.last_time = now_time
+
+        rgb_frame = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        result = self.detector.detect(mp_image)
+        raw_gesture = "None"
+
+        if result.hand_landmarks:
+            height, width, _ = img.shape
+            for hand_landmarks in result.hand_landmarks:
+                raw_gesture = detect_gesture(hand_landmarks)
+
+                if app_settings.get("show_landmarks", True):
+                    for landmark in hand_landmarks:
+                        x = int(landmark.x * width)
+                        y = int(landmark.y * height)
+                        cv2.circle(img, (x, y), 4, theme_colors["accent"], -1)
+
+        self.gesture_history.append(raw_gesture)
+        if len(self.gesture_history) > self.history_size:
+            self.gesture_history.pop(0)
+
+        stable_gesture = max(set(self.gesture_history), key=self.gesture_history.count)
+        if self.gesture_history.count(stable_gesture) >= self.required_matches:
+            detected_gesture = stable_gesture
+        else:
+            detected_gesture = "Stabilizing..."
+
+        now = time.time()
+        if now - self.last_action_time > self.cooldown:
+            if detected_gesture == "Open Hand" and not self.menu_open:
+                if app_settings.get("open_hand_mode", "Show Menu") == "Show Menu":
+                    self.menu_open = True
+                    self.current_message = "Menu opened - choose an option"
+                    self.current_color = theme_colors["accent"]
+                    self.current_size = 0.8
+                    self.current_animation = "Glow Box"
+                else:
+                    settings = ensure_config_shape(load_config()).get("Open Hand", default_gesture_settings("Open Hand"))
+                    self.current_message = settings.get("message", "Open Hand detected")
+                    self.current_color = hex_to_bgr(settings.get("color", "#00A7C2"))
+                    self.current_size = float(settings.get("size", 1.0))
+                    self.current_animation = settings.get("animation", "None")
+                self.last_action_time = now
+
+            elif self.menu_open and detected_gesture in GESTURES_MENU_OPTIONS:
+                settings = ensure_config_shape(load_config()).get(detected_gesture, default_gesture_settings(detected_gesture))
+                self.current_message = settings.get("message", detected_gesture)
+                self.current_color = hex_to_bgr(settings.get("color", "#00A7C2"))
+                self.current_size = float(settings.get("size", 1.0))
+                self.current_animation = settings.get("animation", "None")
+                self.menu_open = False
+                self.last_action_time = now
+
+            elif self.menu_open and detected_gesture == "Closed Fist":
+                self.current_message = "Menu closed"
+                self.current_color = theme_colors["white"]
+                self.current_size = 0.8
+                self.current_animation = "None"
+                self.menu_open = False
+                self.last_action_time = now
+
+            elif not self.menu_open and detected_gesture in GESTURES:
+                settings = ensure_config_shape(load_config()).get(detected_gesture, default_gesture_settings(detected_gesture))
+                self.current_message = settings.get("message", detected_gesture)
+                self.current_color = hex_to_bgr(settings.get("color", "#00A7C2"))
+                self.current_size = float(settings.get("size", 1.0))
+                self.current_animation = settings.get("animation", "None")
+                self.last_action_time = now
+
+        display_color = self.current_color
+        display_size = self.current_size
+
+        if self.current_animation == "Pulse Text":
+            display_size = self.current_size + 0.25 * abs(math.sin(self.tick / 8))
+        if self.current_animation == "Rainbow Text":
+            display_color = get_rainbow_color(self.tick)
+
+        img = draw_animation(img, self.current_animation, display_color, self.tick)
+        if self.menu_open:
+            draw_menu(img, theme_colors)
+
+        height, width, _ = img.shape
+        put_wrapped_text(
+            img,
+            self.current_message,
+            (30, max(60, height - 60)),
+            display_size,
+            display_color,
+            thickness=2,
+            max_width=max(260, width - 70)
+        )
+        cv2.putText(img, f"Detected: {detected_gesture}", (30, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, theme_colors["white"], 2)
+
+        if app_settings.get("show_fps", True):
+            cv2.putText(img, f"FPS: {int(self.fps)}", (max(30, width - 135), 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, theme_colors["white"], 2)
+
+        with self.lock:
+            self.latest_frame = img.copy()
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+
+def render_smart_mirror():
+    st.title("Gesture AI Studios - Smart Mirror")
+    st.write("Press START, allow camera access, and use your browser camera on this device.")
+
+    if st.button("Back to Dashboard"):
+        st.session_state.view = "dashboard"
+        st.rerun()
+
+    if not os.path.exists(MODEL_FILE):
+        st.error("Missing hand_landmarker.task. Add it to the project root before deploying.")
+        return
+
+    ctx = webrtc_streamer(
+        key="gesture-ai-smart-mirror",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=SmartMirrorProcessor,
+        media_stream_constraints={"video": True, "audio": False},
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        async_processing=True,
+    )
+
+    st.divider()
+    if st.button("Take Screenshot"):
+        if ctx.video_processor:
+            with ctx.video_processor.lock:
+                frame = ctx.video_processor.latest_frame
+
+            if frame is None:
+                st.warning("Start the camera first, then take a screenshot.")
+            else:
+                os.makedirs(SCREENSHOT_FOLDER, exist_ok=True)
+                filename = f"smart_mirror_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                path = os.path.join(SCREENSHOT_FOLDER, filename)
+                cv2.imwrite(path, frame)
+
+                with open(path, "rb") as file:
+                    st.download_button(
+                        "Download Screenshot",
+                        file,
+                        file_name=filename,
+                        mime="image/png"
+                    )
+        else:
+            st.warning("Press START first.")
+
+
 st.markdown(
     """
     <style>
@@ -237,6 +568,9 @@ if "username" not in st.session_state:
 if "mirror_process" not in st.session_state:
     st.session_state.mirror_process = None
 
+if "view" not in st.session_state:
+    st.session_state.view = "dashboard"
+
 
 if not st.session_state.logged_in:
     col_logo, col_title = st.columns([1, 4])
@@ -287,6 +621,10 @@ if not st.session_state.logged_in:
 
 
 config = ensure_config_shape(load_config())
+
+if st.session_state.view == "mirror":
+    render_smart_mirror()
+    st.stop()
 
 col_logo, col_title = st.columns([1, 4])
 
@@ -396,23 +734,12 @@ with col_save:
 with col_run:
     if st.button("▶ Run Smart Mirror"):
         save_config(config)
-
-        if st.session_state.mirror_process is None:
-            st.session_state.mirror_process = subprocess.Popen(
-                [sys.executable, "src/smart_mirror.py"]
-            )
-            st.success("Smart Mirror started.")
-        else:
-            st.info("Smart Mirror is already running.")
+        st.session_state.view = "mirror"
+        st.rerun()
 
 with col_stop:
     if st.button("⏹ Stop Smart Mirror"):
-        if st.session_state.mirror_process is not None:
-            st.session_state.mirror_process.terminate()
-            st.session_state.mirror_process = None
-            st.success("Smart Mirror stopped.")
-        else:
-            st.info("Smart Mirror is not running.")
+        st.info("Use the STOP button inside the Smart Mirror camera panel.")
 
 col_reset, col_export = st.columns(2)
 
