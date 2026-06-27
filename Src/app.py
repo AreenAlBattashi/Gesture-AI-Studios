@@ -137,6 +137,20 @@ def login(username, password):
     return users[username]["password"] == hash_password(password)
 
 
+def change_password(username, current_password, new_password):
+    users = load_users()
+
+    if username not in users:
+        return False, "Account not found."
+
+    if users[username]["password"] != hash_password(current_password):
+        return False, "Current password is incorrect."
+
+    users[username]["password"] = hash_password(new_password)
+    save_users(users)
+    return True, "Password updated successfully."
+
+
 def get_config_file():
     if st.session_state.get("logged_in") and st.session_state.get("username"):
         _, _, _, user_config = get_user_folder()
@@ -588,6 +602,22 @@ st.markdown(
         border-radius: 12px;
         margin-bottom: 12px;
     }
+
+    @media (max-width: 700px) {
+        .app-card, .status-box {
+            padding: 14px;
+            border-radius: 10px;
+        }
+
+        .stButton > button {
+            width: 100%;
+            margin-bottom: 6px;
+        }
+
+        h1 {
+            font-size: 2rem;
+        }
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -674,10 +704,32 @@ with col_title:
     st.title("Gesture AI Studios")
     st.write(f"Welcome, **{st.session_state.username}**")
 
-if st.button("Logout"):
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-    st.rerun()
+col_logout, col_account = st.columns([1, 3])
+
+with col_logout:
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.session_state.username = ""
+        st.rerun()
+
+with col_account:
+    with st.expander("Account"):
+        st.write("Your active configuration, saved configurations, and gallery are private to your account.")
+        current_password = st.text_input("Current password", type="password", key="current_password")
+        new_password = st.text_input("New password", type="password", key="new_password")
+        confirm_new_password = st.text_input("Confirm new password", type="password", key="confirm_new_password")
+
+        if st.button("Change Password"):
+            if not current_password or not new_password:
+                st.error("Enter your current password and a new password.")
+            elif new_password != confirm_new_password:
+                st.error("New passwords do not match.")
+            else:
+                success, message = change_password(st.session_state.username, current_password, new_password)
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
 
 st.markdown(
     """
@@ -687,6 +739,16 @@ st.markdown(
         Customize gesture actions, save project configurations, and launch the Smart Mirror experience.<br>
         Developed by Areen Ahmed Nasser Albattashi
         </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="status-box">
+        <b>Quick guide:</b> Save settings, run the Smart Mirror, allow camera access, use an open hand for the menu, and press <b>S</b> in the mirror to save a screenshot.
+        Your workspace is private to your login on this app.
     </div>
     """,
     unsafe_allow_html=True
@@ -825,15 +887,64 @@ with col_project_load:
     if saved_files:
         selected_preset = st.selectbox("Load Saved Configuration", saved_files)
 
-        if st.button("Load Configuration"):
-            preset_path = os.path.join(user_projects_folder, selected_preset)
+        preset_path = os.path.join(user_projects_folder, selected_preset)
 
-            with open(preset_path, "r") as file:
-                loaded_config = json.load(file)
+        col_load_config, col_delete_config = st.columns(2)
 
-            save_config(loaded_config)
-            st.success("Configuration loaded.")
-            st.rerun()
+        with col_load_config:
+            if st.button("Load Configuration"):
+                with open(preset_path, "r") as file:
+                    loaded_config = json.load(file)
+
+                save_config(loaded_config)
+                st.success("Configuration loaded.")
+                st.rerun()
+
+        with col_delete_config:
+            if st.button("Delete Configuration"):
+                os.remove(preset_path)
+                st.success("Configuration deleted.")
+                st.rerun()
+
+        rename_name = st.text_input(
+            "Rename Selected Configuration",
+            value=os.path.splitext(selected_preset)[0],
+            key=f"rename_config_name_{selected_preset}"
+        )
+
+        col_rename_config, col_delete_all_configs = st.columns(2)
+
+        with col_rename_config:
+            if st.button("Rename Configuration"):
+                safe_rename = safe_filename(rename_name)
+
+                if not safe_rename:
+                    st.error("Please enter a valid configuration name.")
+                else:
+                    new_path = os.path.join(user_projects_folder, safe_rename + ".json")
+
+                    if os.path.exists(new_path) and new_path != preset_path:
+                        st.error("A configuration with that name already exists.")
+                    else:
+                        os.replace(preset_path, new_path)
+                        st.success("Configuration renamed.")
+                        st.rerun()
+
+        with col_delete_all_configs:
+            confirm_delete_all_configs = st.checkbox(
+                "Confirm delete all",
+                key="confirm_delete_all_configs"
+            )
+
+            if st.button("Delete All Configurations"):
+                if not confirm_delete_all_configs:
+                    st.error("Confirm delete all before removing configurations.")
+                else:
+                    for file_name in saved_files:
+                        os.remove(os.path.join(user_projects_folder, file_name))
+
+                    st.success("All saved configurations deleted.")
+                    st.rerun()
     else:
         st.info("No saved configurations yet.")
 
